@@ -149,3 +149,90 @@ Command owner configured telegram:<id> (commands.ownerAllowFrom was empty).
 **Aviso:** o proprio agente pode responder que o Telegram esta
 "not configured, disabled" — ele le o estado por outro caminho. Confie no
 `openclaw channels status` e nos logs do gateway, nao nessa resposta.
+
+## 9. Custo descontrolado — heartbeat e modelo
+
+Sintoma: creditos da Anthropic consumidos durante a noite sem ninguem
+mandar mensagem.
+
+### Causas (as tres somadas)
+
+1. **Heartbeat no padrao de fabrica.** O agente acorda sozinho e chama o
+   modelo. A config nova nem tem bloco `heartbeat`, entao roda no default.
+   Referencia da comunidade: ~US$ 0,158 por pulso. De hora em hora sao
+   ~720 pulsos/mes.
+2. **Modelo Opus com effort high.** O mais caro em tudo.
+3. **Loop de erro no memory sync.** `No API key found for provider "openai"`
+   repetindo, e entre cada falha uma chamada ao modelo.
+
+### Bug conhecido, verificar antes de confiar
+
+`agents.defaults.heartbeat.model` e **ignorado** — o heartbeat usa o modelo
+da sessao, nao o configurado. Issues openclaw/openclaw #19445, #9556,
+#14279. Consequencia pratica: **baixar o modelo da sessao e a unica forma
+de baixar o custo do heartbeat.**
+
+### Correcao
+
+Desligar o heartbeat (a doc do container manda, e funciona):
+
+```json
+"agents": {
+  "defaults": {
+    "model": "anthropic/claude-sonnet-5",
+    "heartbeat": { "every": "0m" }
+  }
+}
+```
+
+`0m` desativa a cadencia recorrente. O objeto `heartbeat` e estrito; os
+campos aceitos sao `agentId`, `every`, `activeHours`, `model`, `session`,
+`target`, `directPolicy`, `to`, `accountId`, `prompt`, `timeoutSeconds`,
+`lightContext`, `isolatedSession`.
+
+> Issues do GitHub sugerem o contorno `"every": "9999h"` porque
+> `"heartbeat": false` da erro de validacao. Na versao 2026.8.1 o `0m`
+> funciona — confira a doc dentro do proprio container antes de aplicar
+> contorno de issue antiga:
+> `docker compose exec openclaw-cli grep -rn "heartbeat" /app/docs/gateway/config-agents.md`
+
+### Verificacao (com a chave da API pausada)
+
+```bash
+docker compose up -d && sleep 90
+docker compose logs openclaw-gateway | grep -i heartbeat      # espera: "[heartbeat] disabled"
+docker compose logs openclaw-gateway | grep -c "model-fetch"  # espera: 0
+```
+
+`model-fetch: 0` e a prova de que nada e chamado sem o usuario falar.
+
+### tools.profile — cuidado
+
+Perfis disponiveis: `minimal` (so `session_status`), `messaging`
+(mensagens/sessoes, **sem acesso a arquivo**), `coding` (`group:fs`,
+`group:memory`, `group:web`, `group:runtime`, geracao de midia), `full`.
+
+Um agente com memoria em arquivos (`financas.md`, `historico.md`,
+`pendencias.md`) **precisa de `group:fs` e `group:memory`** — so o perfil
+`coding` os inclui. Trocar para `messaging` parece o certo para um bot de
+chat e quebra a memoria silenciosamente.
+
+### Custo por modelo (US$ por milhao de tokens)
+
+| Modelo | Entrada | Saida |
+|---|---|---|
+| Opus 5 | 5,00 | 25,00 |
+| Sonnet 5 | 2,00 | 10,00 |
+| Haiku 4.5 | 1,00 | 5,00 |
+
+Estimando ~8k de entrada e ~500 de saida por mensagem, US$ 10/mes dao
+~200 mensagens no Opus, ~475 no Sonnet, ~950 no Haiku.
+
+### Ordem de blindagem
+
+1. **Teto de gasto no console da Anthropic** — unica camada que nao depende
+   de configuracao correta nem de ausencia de bug
+2. Heartbeat desligado
+3. Modelo adequado ao caso de uso
+4. Verificar com a chave pausada antes de liberar
+5. Conferir o consumo 1h depois de subir, sem usar
