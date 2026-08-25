@@ -113,3 +113,39 @@ services:
 - [ ] Descobrir de onde os containers da Evolution API foram iniciados —
       o docker-compose.yml deles nao esta em /root, entao hoje nao da para
       reiniciar nem atualizar aquele stack.
+
+## 8. Telegram conectado, mensagem chega, mas o bot nao responde
+
+**Sintoma nos logs do gateway:**
+```
+[telegram] update received updateId=... queued=1
+[telegram] update spooled
+[telegram] offset queued
+[telegram] worker poll-start
+```
+A mensagem chega e para ali. Nenhuma chamada ao modelo, nenhum erro.
+
+**Causa:** o remetente ainda nao foi pareado. O OpenClaw segura mensagem de
+usuario desconhecido esperando aprovacao. `channels status` mostra o canal
+como `enabled, configured, running, connected` — o canal esta certo, quem
+falta e o usuario.
+
+**Solucao:**
+```bash
+docker compose exec openclaw-cli openclaw pairing list --channel telegram
+docker compose exec openclaw-cli openclaw pairing approve telegram <CODE>
+```
+
+O `<CODE>` e o valor curto da coluna `Code` (ex.: `R65JRH9P`), nao o id
+longo que aparece em `device pairing auto-approved` nos logs — esse e o
+pareamento do webchat/terminal, outra coisa.
+
+Ao aprovar, o OpenClaw tambem define o dono dos comandos:
+```
+Approved telegram sender <id>.
+Command owner configured telegram:<id> (commands.ownerAllowFrom was empty).
+```
+
+**Aviso:** o proprio agente pode responder que o Telegram esta
+"not configured, disabled" — ele le o estado por outro caminho. Confie no
+`openclaw channels status` e nos logs do gateway, nao nessa resposta.
